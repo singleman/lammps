@@ -60,7 +60,10 @@ public:
 
   /// \brief Current actual value (not extended DOF)
   colvarvalue const & actual_value() const;
-
+  
+  /// \brief Force constant of the spring
+  cvm::real const & force_constant() const;
+   
   /// \brief Current velocity (previously set by calc() or by read_traj())
   colvarvalue const & velocity() const;
 
@@ -88,8 +91,19 @@ public:
   static std::vector<feature *> cv_features;
 
   /// \brief Implementation of the feature list accessor for colvar
-  std::vector<feature *> &features() {
+  virtual const std::vector<feature *> &features()
+  {
     return cv_features;
+  }
+  virtual std::vector<feature *> &modify_features()
+  {
+    return cv_features;
+  }
+  static void delete_features() {
+    for (size_t i=0; i < cv_features.size(); i++) {
+      delete cv_features[i];
+    }
+    cv_features.clear();
   }
 
   /// Implements possible actions to be carried out
@@ -587,6 +601,10 @@ public:
   }
 };
 
+inline cvm::real const & colvar::force_constant() const
+{
+  return ext_force_k;
+}
 
 inline colvarvalue const & colvar::value() const
 {

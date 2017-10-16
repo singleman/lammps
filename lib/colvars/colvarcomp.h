@@ -132,8 +132,19 @@ public:
   static std::vector<feature *> cvc_features;
 
   /// \brief Implementation of the feature list accessor for colvar
-  virtual std::vector<feature *> &features() {
+  virtual const std::vector<feature *> &features()
+  {
     return cvc_features;
+  }
+  virtual std::vector<feature *> &modify_features()
+  {
+    return cvc_features;
+  }
+  static void delete_features() {
+    for (size_t i=0; i < cvc_features.size(); i++) {
+      delete cvc_features[i];
+    }
+    cvc_features.clear();
   }
 
   /// \brief Obtain data needed for the calculation for the backend

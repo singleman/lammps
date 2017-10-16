@@ -255,11 +255,10 @@ enum {TIME_PACK, TIME_HOST_NEIGHBOR, TIME_HOST_PAIR, TIME_OFFLOAD_NEIGHBOR,
     ito = inum;                                                 \
   }
 
-#define IP_PRE_omp_range(ifrom, ip, ito, tid, inum, nthreads)   \
+#define IP_PRE_omp_range(ifrom, ito, tid, inum, nthreads)       \
   {                                                             \
     ifrom = 0;                                                  \
     ito = inum;                                                 \
-    ip = 1;                                                     \
   }
 
 #define IP_PRE_omp_stride_id(ifrom, ip, ito, tid, inum, nthr)   \
@@ -291,6 +290,15 @@ enum {TIME_PACK, TIME_HOST_NEIGHBOR, TIME_HOST_PAIR, TIME_OFFLOAD_NEIGHBOR,
     tid = 0;                                                    \
     ifrom = 0;                                                  \
     ito = inum;                                                 \
+  }
+
+#define IP_PRE_omp_stride_id_vec(ifrom, ip, ito, tid, inum,     \
+                                 nthr, vecsize)                 \
+  {                                                             \
+    tid = 0;							\
+    ifrom = 0;							\
+    ip = 1;							\
+    ito = inum;							\
   }
 
 #endif

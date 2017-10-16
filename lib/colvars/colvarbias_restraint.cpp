@@ -14,7 +14,7 @@
 
 
 colvarbias_restraint::colvarbias_restraint(char const *key)
-  : colvarbias(key)
+  : colvarbias(key), colvarbias_ti(key)
 {
 }
 
@@ -23,6 +23,8 @@ int colvarbias_restraint::init(std::string const &conf)
 {
   colvarbias::init(conf);
   enable(f_cvb_apply_force);
+
+  colvarbias_ti::init(conf);
 
   if (cvm::debug())
     cvm::log("Initializing a new restraint bias.\n");
@@ -86,7 +88,7 @@ std::ostream & colvarbias_restraint::write_traj(std::ostream &os)
 
 
 colvarbias_restraint_centers::colvarbias_restraint_centers(char const *key)
-  : colvarbias(key), colvarbias_restraint(key)
+  : colvarbias(key), colvarbias_ti(key), colvarbias_restraint(key)
 {
 }
 
@@ -99,12 +101,9 @@ int colvarbias_restraint_centers::init(std::string const &conf)
   if (null_centers) {
     // try to initialize the restraint centers for the first time
     colvar_centers.resize(num_variables());
-    colvar_centers_raw.resize(num_variables());
     for (i = 0; i < num_variables(); i++) {
       colvar_centers[i].type(variables(i)->value());
       colvar_centers[i].reset();
-      colvar_centers_raw[i].type(variables(i)->value());
-      colvar_centers_raw[i].reset();
     }
   }
 
@@ -113,7 +112,6 @@ int colvarbias_restraint_centers::init(std::string const &conf)
       if (cvm::debug()) {
         cvm::log("colvarbias_restraint: parsing initial centers, i = "+cvm::to_str(i)+".\n");
       }
-      colvar_centers_raw[i] = colvar_centers[i];
       colvar_centers[i].apply_constraints();
     }
     null_centers = false;
@@ -141,8 +139,6 @@ int colvarbias_restraint_centers::change_configuration(std::string const &conf)
     for (size_t i = 0; i < num_variables(); i++) {
       colvar_centers[i].type(variables(i)->value());
       colvar_centers[i].apply_constraints();
-      colvar_centers_raw[i].type(variables(i)->value());
-      colvar_centers_raw[i] = colvar_centers[i];
     }
   }
   return COLVARS_OK;
@@ -151,7 +147,7 @@ int colvarbias_restraint_centers::change_configuration(std::string const &conf)
 
 
 colvarbias_restraint_k::colvarbias_restraint_k(char const *key)
-  : colvarbias(key), colvarbias_restraint(key)
+  : colvarbias(key), colvarbias_ti(key), colvarbias_restraint(key)
 {
   force_k = -1.0;
 }
@@ -232,7 +228,6 @@ int colvarbias_restraint_moving::set_state_params(std::string const &conf)
 {
   if (b_chg_centers || b_chg_force_k) {
     if (target_nstages) {
-      //    cvm::log ("Reading current stage from the restart.\n");
       if (!get_keyval(conf, "stage", stage))
         cvm::error("Error: current stage is missing from the restart.\n");
     }
@@ -244,6 +239,7 @@ int colvarbias_restraint_moving::set_state_params(std::string const &conf)
 
 colvarbias_restraint_centers_moving::colvarbias_restraint_centers_moving(char const *key)
   : colvarbias(key),
+    colvarbias_ti(key),
     colvarbias_restraint(key),
     colvarbias_restraint_centers(key),
     colvarbias_restraint_moving(key)
@@ -265,28 +261,68 @@ int colvarbias_restraint_centers_moving::init(std::string const &conf)
 
   size_t i;
   if (get_keyval(conf, "targetCenters", target_centers, colvar_centers)) {
-    if (colvar_centers.size() != num_variables()) {
+    if (target_centers.size() != num_variables()) {
       cvm::error("Error: number of target centers does not match "
-                 "that of collective variables.\n");
+                 "that of collective variables.\n", INPUT_ERROR);
     }
     b_chg_centers = true;
     for (i = 0; i < target_centers.size(); i++) {
       target_centers[i].apply_constraints();
+      centers_incr.push_back(colvar_centers[i]);
+      centers_incr[i].reset();
     }
   }
 
   if (b_chg_centers) {
-    // parse moving restraint options
+    // parse moving schedule options
     colvarbias_restraint_moving::init(conf);
+    if (initial_centers.size() == 0) {
+      // One-time init
+      initial_centers = colvar_centers;
+    }
+    // Call to check that the definition is correct
+    for (i = 0; i < num_variables(); i++) {
+      colvarvalue const midpoint =
+        colvarvalue::interpolate(initial_centers[i],
+                                 target_centers[i],
+                                 0.5);
+    }
+
+    get_keyval(conf, "outputAccumulatedWork", b_output_acc_work,
+               b_output_acc_work); // TODO this conflicts with stages
+
   } else {
     target_centers.clear();
-    return COLVARS_OK;
   }
 
+  // Output restraint centers even when they do not change; some NAMD REUS
+  // scripts expect this behavior
   get_keyval(conf, "outputCenters", b_output_centers, b_output_centers);
-  get_keyval(conf, "outputAccumulatedWork", b_output_acc_work, b_output_acc_work);
 
   return COLVARS_OK;
+}
+
+
+int colvarbias_restraint_centers_moving::update_centers(cvm::real lambda)
+{
+  if (cvm::debug()) {
+    cvm::log("Updating centers for the restraint bias \""+
+             this->name+"\": "+cvm::to_str(colvar_centers)+".\n");
+  }
+  size_t i;
+  for (i = 0; i < num_variables(); i++) {
+    colvarvalue const c_new = colvarvalue::interpolate(initial_centers[i],
+                                                       target_centers[i],
+                                                       lambda);
+    centers_incr[i] = 0.5 * c_new.dist2_grad(colvar_centers[i]);
+    colvar_centers[i] = c_new;
+    variables(i)->wrap(colvar_centers[i]);
+  }
+  if (cvm::debug()) {
+    cvm::log("New centers for the restraint bias \""+
+             this->name+"\": "+cvm::to_str(colvar_centers)+".\n");
+  }
+  return cvm::get_error();
 }
 
 
@@ -294,71 +330,61 @@ int colvarbias_restraint_centers_moving::update()
 {
   if (b_chg_centers) {
 
-    if (cvm::debug()) {
-      cvm::log("Updating centers for the restraint bias \""+
-               this->name+"\": "+cvm::to_str(colvar_centers)+".\n");
-    }
-
-    if (!centers_incr.size()) {
-      // if this is the first calculation, calculate the advancement
-      // at each simulation step (or stage, if applicable)
-      // (take current stage into account: it can be non-zero
-      //  if we are restarting a staged calculation)
-      centers_incr.resize(num_variables());
-      for (size_t i = 0; i < num_variables(); i++) {
-        centers_incr[i].type(variables(i)->value());
-        centers_incr[i] = (target_centers[i] - colvar_centers_raw[i]) /
-          cvm::real( target_nstages ? (target_nstages - stage) :
-                     (target_nsteps - cvm::step_absolute()));
-      }
-      if (cvm::debug()) {
-        cvm::log("Center increment for the restraint bias \""+
-                 this->name+"\": "+cvm::to_str(centers_incr)+" at stage "+cvm::to_str(stage)+ ".\n");
-      }
-    }
-
     if (target_nstages) {
-      if ((cvm::step_relative() > 0)
-          && (cvm::step_absolute() % target_nsteps) == 0
-          && stage < target_nstages) {
-
-        for (size_t i = 0; i < num_variables(); i++) {
-          colvar_centers_raw[i] += centers_incr[i];
-          colvar_centers[i] = colvar_centers_raw[i];
-          variables(i)->wrap(colvar_centers[i]);
-          colvar_centers[i].apply_constraints();
+      // Staged update
+      if (stage <= target_nstages) {
+        if ((cvm::step_relative() > 0) &&
+            ((cvm::step_absolute() % target_nsteps) == 1)) {
+          cvm::real const lambda =
+            cvm::real(stage)/cvm::real(target_nstages);
+          update_centers(lambda);
+          stage++;
+          cvm::log("Moving restraint \"" + this->name +
+                   "\" stage " + cvm::to_str(stage) +
+                   " : setting centers to " + cvm::to_str(colvar_centers) +
+                   " at step " +  cvm::to_str(cvm::step_absolute()));
+        } else {
+          for (size_t i = 0; i < num_variables(); i++) {
+            centers_incr[i].reset();
+          }
         }
-        stage++;
-        cvm::log("Moving restraint \"" + this->name +
-                 "\" stage " + cvm::to_str(stage) +
-                 " : setting centers to " + cvm::to_str(colvar_centers) +
-                 " at step " +  cvm::to_str(cvm::step_absolute()));
       }
-    } else if ((cvm::step_relative() > 0) && (cvm::step_absolute() <= target_nsteps)) {
-      // move the restraint centers in the direction of the targets
-      // (slow growth)
+    } else {
+      // Continuous update
+      if (cvm::step_absolute() <= target_nsteps) {
+        cvm::real const lambda =
+          cvm::real(cvm::step_absolute())/cvm::real(target_nsteps);
+        update_centers(lambda);
+      } else {
+        for (size_t i = 0; i < num_variables(); i++) {
+          centers_incr[i].reset();
+        }
+      }
+    }
+
+    if (cvm::step_relative() == 0) {
       for (size_t i = 0; i < num_variables(); i++) {
-        colvar_centers_raw[i] += centers_incr[i];
-        colvar_centers[i] = colvar_centers_raw[i];
-        variables(i)->wrap(colvar_centers[i]);
-        colvar_centers[i].apply_constraints();
+        // finite differences are undefined when restarting
+        centers_incr[i].reset();
       }
     }
 
     if (cvm::debug()) {
-      cvm::log("New centers for the restraint bias \""+
-               this->name+"\": "+cvm::to_str(colvar_centers)+".\n");
+      cvm::log("Center increment for the restraint bias \""+
+               this->name+"\": "+cvm::to_str(centers_incr)+
+               " at stage "+cvm::to_str(stage)+ ".\n");
     }
   }
 
-  return COLVARS_OK;
+  return cvm::get_error();
 }
 
 
 int colvarbias_restraint_centers_moving::update_acc_work()
 {
   if (b_output_acc_work) {
-    if ((cvm::step_relative() > 0) || (cvm::step_absolute() == 0)) {
+    if ((cvm::step_relative() > 0) &&
+        (cvm::step_absolute() <= target_nsteps)) {
       for (size_t i = 0; i < num_variables(); i++) {
         // project forces on the calculated increments at this step
         acc_work += colvar_forces[i] * centers_incr[i];
@@ -383,13 +409,6 @@ std::string const colvarbias_restraint_centers_moving::get_state_params() const
          << colvar_centers[i];
     }
     os << "\n";
-    os << "centers_raw ";
-    for (i = 0; i < num_variables(); i++) {
-      os << " "
-         << std::setprecision(cvm::cv_prec) << std::setw(cvm::cv_width)
-         << colvar_centers_raw[i];
-    }
-    os << "\n";
 
     if (b_output_acc_work) {
       os << "accumulatedWork "
@@ -398,7 +417,7 @@ std::string const colvarbias_restraint_centers_moving::get_state_params() const
     }
   }
 
-  return colvarbias_restraint_moving::get_state_params() + os.str();
+  return os.str();
 }
 
 
@@ -410,8 +429,6 @@ int colvarbias_restraint_centers_moving::set_state_params(std::string const &con
     //    cvm::log ("Reading the updated restraint centers from the restart.\n");
     if (!get_keyval(conf, "centers", colvar_centers))
       cvm::error("Error: restraint centers are missing from the restart.\n");
-    if (!get_keyval(conf, "centers_raw", colvar_centers_raw))
-      cvm::error("Error: \"raw\" restraint centers are missing from the restart.\n");
     if (b_output_acc_work) {
       if (!get_keyval(conf, "accumulatedWork", acc_work))
         cvm::error("Error: accumulatedWork is missing from the restart.\n");
@@ -464,6 +481,7 @@ std::ostream & colvarbias_restraint_centers_moving::write_traj(std::ostream &os)
 
 colvarbias_restraint_k_moving::colvarbias_restraint_k_moving(char const *key)
   : colvarbias(key),
+    colvarbias_ti(key),
     colvarbias_restraint(key),
     colvarbias_restraint_k(key),
     colvarbias_restraint_moving(key)
@@ -609,7 +627,7 @@ std::string const colvarbias_restraint_k_moving::get_state_params() const
        << std::setprecision(cvm::en_prec)
        << std::setw(cvm::en_width) << force_k << "\n";
   }
-  return colvarbias_restraint_moving::get_state_params() + os.str();
+  return os.str();
 }
 
 
@@ -701,6 +719,7 @@ std::ostream & colvarbias_restraint::write_state(std::ostream &os)
 
 colvarbias_restraint_harmonic::colvarbias_restraint_harmonic(char const *key)
   : colvarbias(key),
+    colvarbias_ti(key),
     colvarbias_restraint(key),
     colvarbias_restraint_centers(key),
     colvarbias_restraint_moving(key),
@@ -732,17 +751,22 @@ int colvarbias_restraint_harmonic::init(std::string const &conf)
 
 int colvarbias_restraint_harmonic::update()
 {
+  int error_code = COLVARS_OK;
+
+  // update the TI estimator (if defined)
+  error_code |= colvarbias_ti::update();
+
   // update parameters (centers or force constant)
-  colvarbias_restraint_centers_moving::update();
-  colvarbias_restraint_k_moving::update();
+  error_code |= colvarbias_restraint_centers_moving::update();
+  error_code |= colvarbias_restraint_k_moving::update();
 
   // update restraint energy and forces
-  colvarbias_restraint::update();
+  error_code |= colvarbias_restraint::update();
 
   // update accumulated work using the current forces
-  colvarbias_restraint_centers_moving::update_acc_work();
+  error_code |= colvarbias_restraint_centers_moving::update_acc_work();
 
-  return COLVARS_OK;
+  return error_code;
 }
 
 
@@ -770,6 +794,7 @@ cvm::real colvarbias_restraint_harmonic::d_restraint_potential_dk(size_t i) cons
 std::string const colvarbias_restraint_harmonic::get_state_params() const
 {
   return colvarbias_restraint::get_state_params() +
+    colvarbias_restraint_moving::get_state_params() +
     colvarbias_restraint_centers_moving::get_state_params() +
     colvarbias_restraint_k_moving::get_state_params();
 }
@@ -779,9 +804,22 @@ int colvarbias_restraint_harmonic::set_state_params(std::string const &conf)
 {
   int error_code = COLVARS_OK;
   error_code |= colvarbias_restraint::set_state_params(conf);
+  error_code |= colvarbias_restraint_moving::set_state_params(conf);
   error_code |= colvarbias_restraint_centers_moving::set_state_params(conf);
   error_code |= colvarbias_restraint_k_moving::set_state_params(conf);
   return error_code;
+}
+
+
+std::ostream & colvarbias_restraint_harmonic::write_state_data(std::ostream &os)
+{
+  return colvarbias_ti::write_state_data(os);
+}
+
+
+std::istream & colvarbias_restraint_harmonic::read_state_data(std::istream &is)
+{
+  return colvarbias_ti::read_state_data(is);
 }
 
 
@@ -832,6 +870,7 @@ cvm::real colvarbias_restraint_harmonic::energy_difference(std::string const &co
 
 colvarbias_restraint_harmonic_walls::colvarbias_restraint_harmonic_walls(char const *key)
   : colvarbias(key),
+    colvarbias_ti(key),
     colvarbias_restraint(key),
     colvarbias_restraint_k(key),
     colvarbias_restraint_moving(key),
@@ -954,11 +993,15 @@ int colvarbias_restraint_harmonic_walls::init(std::string const &conf)
 
 int colvarbias_restraint_harmonic_walls::update()
 {
-  colvarbias_restraint_k_moving::update();
+  int error_code = COLVARS_OK;
 
-  colvarbias_restraint::update();
+  error_code |= colvarbias_ti::update();
 
-  return COLVARS_OK;
+  error_code |= colvarbias_restraint_k_moving::update();
+
+  error_code |= colvarbias_restraint::update();
+
+  return error_code;
 }
 
 
@@ -1037,6 +1080,7 @@ cvm::real colvarbias_restraint_harmonic_walls::d_restraint_potential_dk(size_t i
 std::string const colvarbias_restraint_harmonic_walls::get_state_params() const
 {
   return colvarbias_restraint::get_state_params() +
+    colvarbias_restraint_moving::get_state_params() +
     colvarbias_restraint_k_moving::get_state_params();
 }
 
@@ -1045,8 +1089,21 @@ int colvarbias_restraint_harmonic_walls::set_state_params(std::string const &con
 {
   int error_code = COLVARS_OK;
   error_code |= colvarbias_restraint::set_state_params(conf);
+  error_code |= colvarbias_restraint_moving::set_state_params(conf);
   error_code |= colvarbias_restraint_k_moving::set_state_params(conf);
   return error_code;
+}
+
+
+std::ostream & colvarbias_restraint_harmonic_walls::write_state_data(std::ostream &os)
+{
+  return colvarbias_ti::write_state_data(os);
+}
+
+
+std::istream & colvarbias_restraint_harmonic_walls::read_state_data(std::istream &is)
+{
+  return colvarbias_ti::read_state_data(is);
 }
 
 
@@ -1069,6 +1126,7 @@ std::ostream & colvarbias_restraint_harmonic_walls::write_traj(std::ostream &os)
 
 colvarbias_restraint_linear::colvarbias_restraint_linear(char const *key)
   : colvarbias(key),
+    colvarbias_ti(key),
     colvarbias_restraint(key),
     colvarbias_restraint_centers(key),
     colvarbias_restraint_moving(key),
@@ -1105,17 +1163,22 @@ int colvarbias_restraint_linear::init(std::string const &conf)
 
 int colvarbias_restraint_linear::update()
 {
+  int error_code = COLVARS_OK;
+
+  // update the TI estimator (if defined)
+  error_code |= colvarbias_ti::update();
+
   // update parameters (centers or force constant)
-  colvarbias_restraint_centers_moving::update();
-  colvarbias_restraint_k_moving::update();
+  error_code |= colvarbias_restraint_centers_moving::update();
+  error_code |= colvarbias_restraint_k_moving::update();
 
   // update restraint energy and forces
-  colvarbias_restraint::update();
+  error_code |= colvarbias_restraint::update();
 
   // update accumulated work using the current forces
-  colvarbias_restraint_centers_moving::update_acc_work();
+  error_code |= colvarbias_restraint_centers_moving::update_acc_work();
 
-  return COLVARS_OK;
+  return error_code;
 }
 
 
@@ -1164,6 +1227,7 @@ cvm::real colvarbias_restraint_linear::d_restraint_potential_dk(size_t i) const
 std::string const colvarbias_restraint_linear::get_state_params() const
 {
   return colvarbias_restraint::get_state_params() +
+    colvarbias_restraint_moving::get_state_params() +
     colvarbias_restraint_centers_moving::get_state_params() +
     colvarbias_restraint_k_moving::get_state_params();
 }
@@ -1173,9 +1237,22 @@ int colvarbias_restraint_linear::set_state_params(std::string const &conf)
 {
   int error_code = COLVARS_OK;
   error_code |= colvarbias_restraint::set_state_params(conf);
+  error_code |= colvarbias_restraint_moving::set_state_params(conf);
   error_code |= colvarbias_restraint_centers_moving::set_state_params(conf);
   error_code |= colvarbias_restraint_k_moving::set_state_params(conf);
   return error_code;
+}
+
+
+std::ostream & colvarbias_restraint_linear::write_state_data(std::ostream &os)
+{
+  return colvarbias_ti::write_state_data(os);
+}
+
+
+std::istream & colvarbias_restraint_linear::read_state_data(std::istream &is)
+{
+  return colvarbias_ti::read_state_data(is);
 }
 
 

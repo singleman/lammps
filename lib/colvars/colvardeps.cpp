@@ -374,8 +374,8 @@ int colvardeps::decr_ref_count(int feature_id) {
 }
 
 void colvardeps::init_feature(int feature_id, const char *description, feature_type type) {
-  features()[feature_id]->description = description;
-  features()[feature_id]->type = type;
+  modify_features()[feature_id]->description = description;
+  modify_features()[feature_id]->type = type;
 }
 
 // Shorthand macros for describing dependencies
@@ -401,7 +401,7 @@ void colvardeps::init_cvb_requires() {
   int i;
   if (features().size() == 0) {
     for (i = 0; i < f_cvb_ntot; i++) {
-      features().push_back(new feature);
+      modify_features().push_back(new feature);
     }
 
     init_feature(f_cvb_active, "active", f_type_dynamic);
@@ -413,15 +413,27 @@ void colvardeps::init_cvb_requires() {
     init_feature(f_cvb_apply_force, "apply force", f_type_user);
     f_req_children(f_cvb_apply_force, f_cv_gradient);
 
-    init_feature(f_cvb_get_total_force, "obtain total force");
+    init_feature(f_cvb_get_total_force, "obtain total force", f_type_dynamic);
     f_req_children(f_cvb_get_total_force, f_cv_total_force);
 
     init_feature(f_cvb_history_dependent, "history-dependent", f_type_static);
+
+    init_feature(f_cvb_time_dependent, "time-dependent", f_type_static);
 
     init_feature(f_cvb_scalar_variables, "require scalar variables", f_type_static);
     f_req_children(f_cvb_scalar_variables, f_cv_scalar);
 
     init_feature(f_cvb_calc_pmf, "calculate a PMF", f_type_static);
+
+    init_feature(f_cvb_calc_ti_samples, "calculate TI samples", f_type_dynamic);
+    f_req_self(f_cvb_calc_ti_samples, f_cvb_get_total_force);
+    f_req_children(f_cvb_calc_ti_samples, f_cv_grid);
+
+    init_feature(f_cvb_write_ti_samples, "write TI samples ", f_type_user);
+    f_req_self(f_cvb_write_ti_samples, f_cvb_calc_ti_samples);
+
+    init_feature(f_cvb_write_ti_pmf, "write TI PMF", f_type_user);
+    f_req_self(f_cvb_write_ti_pmf, f_cvb_calc_ti_samples);
   }
 
   // Initialize feature_states for each instance
@@ -431,6 +443,9 @@ void colvardeps::init_cvb_requires() {
     // Most features are available, so we set them so
     // and list exceptions below
   }
+
+  // only compute TI samples when deriving from colvarbias_ti
+  feature_states[f_cvb_calc_ti_samples].available = false;
 }
 
 
@@ -438,7 +453,7 @@ void colvardeps::init_cv_requires() {
   size_t i;
   if (features().size() == 0) {
     for (i = 0; i < f_cv_ntot; i++) {
-      features().push_back(new feature);
+      modify_features().push_back(new feature);
     }
 
     init_feature(f_cv_active, "active", f_type_dynamic);
@@ -504,9 +519,6 @@ void colvardeps::init_cv_requires() {
 
     init_feature(f_cv_subtract_applied_force, "subtract applied force from total force", f_type_user);
     f_req_self(f_cv_subtract_applied_force, f_cv_total_force);
-    // There is no well-defined way to implement f_cv_subtract_applied_force
-    // in the case of extended-Lagrangian colvars
-    f_req_exclude(f_cv_subtract_applied_force, f_cv_extended_Lagrangian);
 
     init_feature(f_cv_lower_boundary, "lower boundary", f_type_user);
     f_req_self(f_cv_lower_boundary, f_cv_scalar);
@@ -514,7 +526,7 @@ void colvardeps::init_cv_requires() {
     init_feature(f_cv_upper_boundary, "upper boundary", f_type_user);
     f_req_self(f_cv_upper_boundary, f_cv_scalar);
 
-    init_feature(f_cv_grid, "grid", f_type_user);
+    init_feature(f_cv_grid, "grid", f_type_dynamic);
     f_req_self(f_cv_grid, f_cv_lower_boundary);
     f_req_self(f_cv_grid, f_cv_upper_boundary);
 
@@ -554,7 +566,7 @@ void colvardeps::init_cvc_requires() {
   // Initialize static array once and for all
   if (features().size() == 0) {
     for (i = 0; i < colvardeps::f_cvc_ntot; i++) {
-      features().push_back(new feature);
+      modify_features().push_back(new feature);
     }
 
     init_feature(f_cvc_active, "active", f_type_dynamic);
@@ -633,7 +645,7 @@ void colvardeps::init_ag_requires() {
   // Initialize static array once and for all
   if (features().size() == 0) {
     for (i = 0; i < f_ag_ntot; i++) {
-      features().push_back(new feature);
+      modify_features().push_back(new feature);
     }
 
     init_feature(f_ag_active, "active", f_type_dynamic);
@@ -691,7 +703,6 @@ void colvardeps::print_state() {
   }
   cvm::decrease_depth();
 }
-
 
 
 void colvardeps::add_child(colvardeps *child) {
