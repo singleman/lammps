@@ -55,6 +55,46 @@
 namespace Kokkos {
 namespace Impl {
 
+template< class FunctorType, class Enable = void>
+struct ReduceFunctorHasInit {
+  enum {value = false};
+};
+
+template< class FunctorType>
+struct ReduceFunctorHasInit<FunctorType, typename Impl::enable_if< 0 < sizeof( & FunctorType::init ) >::type > {
+  enum {value = true};
+};
+
+template< class FunctorType, class Enable = void>
+struct ReduceFunctorHasJoin {
+  enum {value = false};
+};
+
+template< class FunctorType>
+struct ReduceFunctorHasJoin<FunctorType, typename Impl::enable_if< 0 < sizeof( & FunctorType::join ) >::type > {
+  enum {value = true};
+};
+
+template< class FunctorType, class Enable = void>
+struct ReduceFunctorHasFinal {
+  enum {value = false};
+};
+
+template< class FunctorType>
+struct ReduceFunctorHasFinal<FunctorType, typename Impl::enable_if< 0 < sizeof( & FunctorType::final ) >::type > {
+  enum {value = true};
+};
+
+template< class FunctorType, class Enable = void>
+  struct ReduceFunctorHasShmemSize {
+  enum {value = false};
+};
+
+template< class FunctorType>
+struct ReduceFunctorHasShmemSize<FunctorType, typename Impl::enable_if< 0 < sizeof( & FunctorType::team_shmem_size ) >::type > {
+  enum {value = true};
+};
+
 template< class FunctorType , class ArgTag , class Enable = void >
 struct FunctorDeclaresValueType : public Impl::false_type {};
 
@@ -63,6 +103,21 @@ struct FunctorDeclaresValueType< FunctorType , ArgTag
                                , typename Impl::enable_if_type< typename FunctorType::value_type >::type >
   : public Impl::true_type {};
 
+template< class FunctorType, bool Enable =
+      ( FunctorDeclaresValueType<FunctorType,void>::value) ||
+      ( ReduceFunctorHasInit<FunctorType>::value  ) ||
+      ( ReduceFunctorHasJoin<FunctorType>::value  ) ||
+      ( ReduceFunctorHasFinal<FunctorType>::value ) ||
+      ( ReduceFunctorHasShmemSize<FunctorType>::value )
+      >
+struct IsNonTrivialReduceFunctor {
+  enum {value = false};
+};
+
+template< class FunctorType>
+struct IsNonTrivialReduceFunctor<FunctorType, true> {
+  enum {value = true};
+};
 
 /** \brief  Query Functor and execution policy argument tag for value type.
  *
@@ -129,14 +184,14 @@ struct FunctorValueTraits< FunctorType , ArgTag , true /* == exists FunctorType:
   // Number of values if single value
   template< class F >
   KOKKOS_FORCEINLINE_FUNCTION static
-  typename Impl::enable_if< Impl::is_same<F,FunctorType>::value && StaticValueSize , unsigned >::type
+  typename Impl::enable_if< std::is_same<F,FunctorType>::value && StaticValueSize , unsigned >::type
     value_count( const F & ) { return 1 ; }
 
   // Number of values if an array, protect via templating because 'f.value_count'
   // will only exist when the functor declares the value_type to be an array.
   template< class F >
   KOKKOS_FORCEINLINE_FUNCTION static
-  typename Impl::enable_if< Impl::is_same<F,FunctorType>::value && ! StaticValueSize , unsigned >::type
+  typename Impl::enable_if< std::is_same<F,FunctorType>::value && ! StaticValueSize , unsigned >::type
     value_count( const F & f ) { return f.value_count ; }
 
   // Total size of the value
@@ -157,7 +212,7 @@ private:
   struct REJECTTAG {}; // Reject tagged operator() when using non-tagged execution policy.
 
   typedef typename
-    Impl::if_c< Impl::is_same< ArgTag , void >::value , VOIDTAG , ArgTag >::type tag_type ;
+    Impl::if_c< std::is_same< ArgTag , void >::value , VOIDTAG , ArgTag >::type tag_type ;
 
   //----------------------------------------
   // parallel_for operator without a tag:
@@ -339,8 +394,8 @@ private:
 
   typedef decltype( deduce_reduce_type( tag_type() , & FunctorType::operator() ) ) ValueType ;
 
-  enum { IS_VOID   = Impl::is_same<VOIDTAG  ,ValueType>::value };
-  enum { IS_REJECT = Impl::is_same<REJECTTAG,ValueType>::value };
+  enum { IS_VOID   = std::is_same<VOIDTAG  ,ValueType>::value };
+  enum { IS_REJECT = std::is_same<REJECTTAG,ValueType>::value };
 
 public:
 

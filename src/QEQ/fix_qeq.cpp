@@ -286,9 +286,6 @@ void FixQEq::setup_pre_force(int vflag)
   if (force->newton_pair == 0)
     error->all(FLERR,"QEQ with 'newton pair off' not supported");
 
-  // should not be needed
-  // neighbor->build_one(list);
-
   deallocate_storage();
   allocate_storage();
 
@@ -305,13 +302,6 @@ void FixQEq::setup_pre_force(int vflag)
 void FixQEq::setup_pre_force_respa(int vflag, int ilevel)
 {
   if (ilevel < nlevels_respa-1) return;
-  setup_pre_force(vflag);
-}
-
-/* ---------------------------------------------------------------------- */
-
-void FixQEq::min_setup_pre_force(int vflag)
-{
   setup_pre_force(vflag);
 }
 

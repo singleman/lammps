@@ -20,7 +20,7 @@
 
 namespace LAMMPS_NS {
 
-enum{FULL=1u,HALFTHREAD=2u,HALF=4u,N2=8u,FULLCLUSTER=16u};
+enum{FULL=1u,HALFTHREAD=2u,HALF=4u,N2=8u};
 
 class AtomNeighbors
 {
@@ -68,20 +68,13 @@ class NeighListKokkos: public NeighList {
 public:
   int maxneighs;
 
-  void clean_copy();
   void grow(int nmax);
   typename ArrayTypes<Device>::t_neighbors_2d d_neighbors;
   typename DAT::tdual_int_1d k_ilist;   // local indices of I atoms
   typename ArrayTypes<Device>::t_int_1d d_ilist;
   typename ArrayTypes<Device>::t_int_1d d_numneigh; // # of J neighs for each I
-  typename ArrayTypes<Device>::t_int_1d d_stencil;  // # of J neighs for each I
-  typename ArrayTypes<LMPHostType>::t_int_1d h_stencil; // # of J neighs per I
-  typename ArrayTypes<Device>::t_int_1d_3 d_stencilxyz;
-  typename ArrayTypes<LMPHostType>::t_int_1d_3 h_stencilxyz;
 
-  NeighListKokkos(class LAMMPS *lmp):
-  NeighList(lmp) {_stride = 1; maxneighs = 16;};
-  ~NeighListKokkos() {stencil = NULL; numneigh = NULL; ilist = NULL;};
+  NeighListKokkos(class LAMMPS *lmp);
 
   KOKKOS_INLINE_FUNCTION
   AtomNeighbors get_neighbors(const int &i) const {
@@ -99,7 +92,8 @@ public:
   int& num_neighs(const int & i) const {
     return d_numneigh(i);
   }
-  void stencil_allocate(int smax, int style);
+ private:
+  int maxatoms;
 };
 
 }

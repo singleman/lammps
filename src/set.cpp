@@ -295,13 +295,20 @@ void Set::command(int narg, char **arg)
       set(DIAMETER);
       iarg += 2;
 
-    } else if (strcmp(arg[iarg],"density") == 0) {
+    } else if (strcmp(arg[iarg],"density") == 0 ||
+               (strcmp(arg[iarg],"density/disc") == 0)) {
       if (iarg+2 > narg) error->all(FLERR,"Illegal set command");
       if (strstr(arg[iarg+1],"v_") == arg[iarg+1]) varparse(arg[iarg+1],1);
       else dvalue = force->numeric(FLERR,arg[iarg+1]);
       if (!atom->rmass_flag)
         error->all(FLERR,"Cannot set this attribute for this atom style");
       if (dvalue <= 0.0) error->all(FLERR,"Invalid density in set command");
+      discflag = 0;
+      if (strcmp(arg[iarg],"density/disc") == 0) {
+        discflag = 1;
+        if (domain->dimension != 2)
+          error->all(FLERR,"Density/disc option requires 2d simulation");
+      }
       set(DENSITY);
       iarg += 2;
 
@@ -320,15 +327,18 @@ void Set::command(int narg, char **arg)
       ximageflag = yimageflag = zimageflag = 0;
       if (strcmp(arg[iarg+1],"NULL") != 0) {
         ximageflag = 1;
-        ximage = force->inumeric(FLERR,arg[iarg+1]);
+        if (strstr(arg[iarg+1],"v_") == arg[iarg+1]) varparse(arg[iarg+1],1);
+        else ximage = force->inumeric(FLERR,arg[iarg+1]);
       }
       if (strcmp(arg[iarg+2],"NULL") != 0) {
         yimageflag = 1;
-        yimage = force->inumeric(FLERR,arg[iarg+2]);
+        if (strstr(arg[iarg+2],"v_") == arg[iarg+2]) varparse(arg[iarg+2],2);
+        else yimage = force->inumeric(FLERR,arg[iarg+2]);
       }
       if (strcmp(arg[iarg+3],"NULL") != 0) {
         zimageflag = 1;
-        zimage = force->inumeric(FLERR,arg[iarg+3]);
+        if (strstr(arg[iarg+3],"v_") == arg[iarg+3]) varparse(arg[iarg+3],3);
+        else zimage = force->inumeric(FLERR,arg[iarg+3]);
       }
       if (ximageflag && ximage && !domain->xperiodic)
         error->all(FLERR,
@@ -578,6 +588,28 @@ void Set::set(int keyword)
     }
   }
 
+  // check if properties of atoms in rigid bodies are updated
+  // that are cached as per-body data.
+  switch (keyword) {
+  case X:
+  case Y:
+  case Z:
+  case MOLECULE:
+  case MASS:
+  case ANGMOM:
+  case SHAPE:
+  case DIAMETER:
+  case DENSITY:
+  case QUAT:
+  case IMAGE:
+    if (modify->check_rigid_list_overlap(select))
+      error->warning(FLERR,"Changing a property of atoms in rigid bodies "
+                     "that has no effect unless rigid bodies are rebuild");
+    break;
+  default: // assume no conflict for all other properties
+    break;
+  }
+
   // loop over selected atoms
 
   AtomVecEllipsoid *avec_ellipsoid =
@@ -678,8 +710,8 @@ void Set::set(int keyword)
     }
 
     // set rmass via density
-    // if radius > 0.0, treat as sphere
-    // if shape > 0.0, treat as ellipsoid
+    // if radius > 0.0, treat as sphere or disc
+    // if shape > 0.0, treat as ellipsoid (or ellipse, when uncomment below)
     // if length > 0.0, treat as line
     // if area > 0.0, treat as tri
     // else set rmass to density directly
@@ -687,10 +719,18 @@ void Set::set(int keyword)
     else if (keyword == DENSITY) {
       if (dvalue <= 0.0) error->one(FLERR,"Invalid density in set command");
       if (atom->radius_flag && atom->radius[i] > 0.0)
-        atom->rmass[i] = 4.0*MY_PI/3.0 *
-          atom->radius[i]*atom->radius[i]*atom->radius[i] * dvalue;
+	if (discflag) 
+          atom->rmass[i] = MY_PI*atom->radius[i]*atom->radius[i] * dvalue;
+	else 
+          atom->rmass[i] = 4.0*MY_PI/3.0 * 
+            atom->radius[i]*atom->radius[i]*atom->radius[i] * dvalue;
       else if (atom->ellipsoid_flag && atom->ellipsoid[i] >= 0) {
         double *shape = avec_ellipsoid->bonus[atom->ellipsoid[i]].shape;
+        // enable 2d ellipse (versus 3d ellipsoid) when time integration
+        //   options (fix nve/asphere, fix nh/asphere) are also implemented
+        // if (discflag) 
+        // atom->rmass[i] = MY_PI*shape[0]*shape[1] * dvalue;
+	// else 
         atom->rmass[i] = 4.0*MY_PI/3.0 * shape[0]*shape[1]*shape[2] * dvalue;
       } else if (atom->line_flag && atom->line[i] >= 0) {
         double length = avec_line->bonus[atom->line[i]].length;
@@ -774,6 +814,9 @@ void Set::set(int keyword)
       int xbox = (atom->image[i] & IMGMASK) - IMGMAX;
       int ybox = (atom->image[i] >> IMGBITS & IMGMASK) - IMGMAX;
       int zbox = (atom->image[i] >> IMG2BITS) - IMGMAX;
+      if (varflag1) ximage = static_cast<int>(xvalue);
+      if (varflag2) yimage = static_cast<int>(yvalue);
+      if (varflag3) zimage = static_cast<int>(zvalue);
       if (ximageflag) xbox = ximage;
       if (yimageflag) ybox = yimage;
       if (zimageflag) zbox = zimage;

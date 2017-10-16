@@ -7,6 +7,8 @@ Tutorials :h1
 
    tutorial_drude
    tutorial_github
+   tutorial_pylammps
+   tutorial_bash_on_windows
    body
    manifolds
 
